@@ -2,7 +2,7 @@
  *
  * Algorithm:
  *   1. Read RGB (0..1).
- *   2. Apply PS-style lightness adjust on each RGB channel (screen / multiply).
+ *   2. Apply Overlay-style lightness adjust on each RGB channel (Overlay blend with solid gray layer).
  *   3. Convert adjusted RGB to HSL, take L = (max+min)/2.
  *   4. Replace H with slider hue, S with slider saturation.
  *      L is UNCHANGED from the adjusted value above.
@@ -28,7 +28,7 @@ property_double (saturation, _("Saturation"), 50.0) \
     ui_range (0.0, 100.0)
 
 property_double (lightness, _("Lightness"), 0.0) \
-    description (_("Lightness adjustment, same as PS Hue/Saturation (-100 ~ +100)")) \
+    description (_("Lightness adjustment, Overlay blend solid gray layer (-100 ~ +100)")) \
     value_range (-100.0, 100.0) \
     ui_range (-100.0, 100.0)
 
@@ -107,36 +107,35 @@ static void hsl_to_rgb(gdouble h, gdouble s, gdouble l,
   *b_out = b + m;
 }
 
-/* ---------- PS 明度调整：作用在 0..1 的单个颜色通道上 ----------
- *   light_slider > 0 : screen
- *   light_slider < 0 : multiply
- *   light_slider = 0 : 不变
+/* ---------- Overlay 明度调整：v=底层通道0..1, light_slider [-100,100]
+ *   上层是纯色灰度 a ∈ [0,1]
+ *   Overlay公式：
+ *      if v <=0.5: out = 2*v*a
+ *      else:        out = 1 - 2*(1-v)*(1-a)
  * 返回 0..1
  */
 static inline gdouble adjust_channel(gdouble v, gdouble light_slider)
 {
-  gdouble v8 = v * 255.0;
-  gdouble out8;
+  // 滑块映射到Overlay上层灰度 a: [-100,100] → [0,1]
+  gdouble a = (light_slider + 100.0) / 200.0;
 
-  if (light_slider >= 0.0)
+  gdouble out;
+  if (v <= 0.5)
   {
-    gdouble gray = light_slider * 255.0 / 100.0;              /* 0..255 */
-    out8 = 255.0 - (255.0 - v8) * (255.0 - gray) / 255.0;     /* screen */
+    out = 2.0 * v * a;
   }
   else
   {
-    gdouble gray = (100.0 + light_slider) * 255.0 / 100.0;    /* 0..255 */
-    out8 = v8 * gray / 255.0;                                 /* multiply */
+    out = 1.0 - 2.0 * (1.0 - v) * (1.0 - a);
   }
-
-  return out8 / 255.0;
+  return clamp01(out);
 }
 
 static void colorize_kernel(gfloat inR, gfloat inG, gfloat inB,
                             gdouble target_h, gdouble target_s, gdouble light_slider,
                             gfloat *outR, gfloat *outG, gfloat *outB)
 {
-  /* --- Step 1: 先对 RGB 通道做明度/色阶调整 --- */
+  /* --- Step 1: 先对 RGB 通道做Overlay明度调整 --- */
   gdouble r_adj = adjust_channel(inR, light_slider);
   gdouble g_adj = adjust_channel(inG, light_slider);
   gdouble b_adj = adjust_channel(inB, light_slider);
@@ -230,10 +229,10 @@ gegl_op_class_init(GeglOpClass *klass)
 
   gegl_operation_class_set_keys(oclass,
     "name",        "lb:ps-colorize",
-    "title",       _("PS Colorize (HSL)"),
-    "description", _("Photoshop-style colorize: keep HSL lightness, replace hue/saturation."),
+    "title",       _("Overlay Colorize (HSL)"),
+    "description", _("Colorize with Overlay-based lightness adjustment: keep HSL lightness, replace hue/saturation."),
     "gimp:menu-path", "<Image>/Colors/myfilters",
-    "gimp:menu-label", _("PS Colorize (HSL)"),
+    "gimp:menu-label", _("Overlay Colorize (HSL)"),
     NULL);
 }
 
